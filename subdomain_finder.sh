@@ -1,56 +1,67 @@
 #!/bin/bash
 
-# Subdomain Finder Tool
-# Author: WhiteRabbitNeo
-# Usage: ./subdomain_finder.sh <domain>
+# 🛠 Subdomain Finder Tool - Enhanced
+# 🔹 Author: Yash Tiwari
+# 🔹 Usage: ./subdomain_finder.sh <domain>
 
-# Check if a domain was provided
+# Check if a domain is provided
 if [ -z "$1" ]; then
-    echo "Usage: ./subdomain_finder.sh <domain>"
+    echo -e "\n🔴 Usage: $0 <domain>\n"
     exit 1
 fi
 
-# Domain to search for subdomains
-domain=$1
+# Assign domain variable
+DOMAIN=$1
+OUTPUT_FILE="all_subdomains.txt"
+TEMP_FILE="temp_subdomains.txt"
 
-# Check if subfinder is installed
-if ! [ -x "$(command -v subfinder)" ]; then
-    echo "Error: subfinder is not installed."
-    echo "Installing subfinder..."
-    go get -u github.com/projectdiscovery/subfinder/cmd/subfinder
+# Function to install missing tools
+install_tool() {
+    TOOL=$1
+    INSTALL_CMD=$2
+
+    if ! [ -x "$(command -v $TOOL)" ]; then
+        echo -e "⚠️  $TOOL not found. Installing..."
+        eval "$INSTALL_CMD"
+    fi
+}
+
+# Install required tools if missing
+install_tool "subfinder" "go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
+install_tool "assetfinder" "go install -v github.com/tomnomnom/assetfinder@latest"
+install_tool "amass" "go install -v github.com/OWASP/Amass/v3/...@latest"
+
+# Start enumeration
+echo -e "\n🔍 Starting subdomain enumeration for: $DOMAIN\n"
+
+# Run tools in parallel
+echo "▶️ Running subfinder..."
+subfinder -d "$DOMAIN" -silent >> "$TEMP_FILE" &
+
+echo "▶️ Running assetfinder..."
+assetfinder --subs-only "$DOMAIN" >> "$TEMP_FILE" &
+
+echo "▶️ Running amass..."
+amass enum -passive -d "$DOMAIN" >> "$TEMP_FILE" &
+
+# Wait for background processes to finish
+wait
+
+# Process results
+echo -e "\n📌 Removing duplicates and saving results..."
+sort -u "$TEMP_FILE" > "$OUTPUT_FILE"
+rm "$TEMP_FILE"
+
+echo -e "\n✅ Subdomain enumeration completed! Results saved in: $OUTPUT_FILE\n"
+
+# Optional: Check for live subdomains
+read -p "🔎 Do you want to check for live subdomains? (y/n): " answer
+if [[ "$answer" == "y" ]]; then
+    if ! command -v httpx &> /dev/null; then
+        echo -e "⚠️  httpx not found. Installing..."
+        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+    fi
+    echo -e "\n▶️ Checking live subdomains..."
+    cat "$OUTPUT_FILE" | httpx -silent > "live_subdomains.txt"
+    echo -e "\n✅ Live subdomains saved in: live_subdomains.txt\n"
 fi
-
-# Check if assetfinder is installed
-if ! [ -x "$(command -v assetfinder)" ]; then
-    echo "Error: assetfinder is not installed."
-    echo "Installing assetfinder..."
-    go get -u github.com/tomnomnom/assetfinder
-fi
-
-# Check if amass is installed
-if ! [ -x "$(command -v amass)" ]; then
-    echo "Error: amass is not installed."
-    echo "Installing amass..."
-    go get -u github.com/OWASP/Amass/v3/...
-fi
-
-# Find subdomains using subfinder
-echo "Finding subdomains using subfinder..."
-subfinder -d $domain -o subfinder_output.txt
-
-# Find subdomains using assetfinder
-echo "Finding subdomains using assetfinder..."
-assetfinder $domain | grep $domain >> assetfinder_output.txt
-
-# Find subdomains using amass
-echo "Finding subdomains using amass..."
-amass enum -d $domain -o amass_output.txt
-
-# Combine results
-echo "Combining results..."
-cat subfinder_output.txt assetfinder_output.txt amass_output.txt | sort -u > all_subdomains.txt
-
-# Clean up
-rm subfinder_output.txt assetfinder_output.txt amass_output.txt
-
-echo "Subdomain finding completed. Results saved in all_subdomains.txt"
